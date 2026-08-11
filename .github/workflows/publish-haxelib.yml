@@ -1,0 +1,83 @@
+name: Publish to Haxelib
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Haxe
+        uses: krdlab/setup-haxe@v2
+        with:
+          haxe-version: latest
+
+      - name: Setup Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+
+      - name: Setup Haxelib repository
+        run: |
+          mkdir -p "$RUNNER_TEMP/haxelib"
+          haxelib setup "$RUNNER_TEMP/haxelib"
+
+      - name: Prepare package directory
+        run: |
+          rm -rf package
+          mkdir package
+
+          CLASS_PATH=$(python3 -c "import json; from pathlib import Path; path=Path('haxelib.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('classPath') or 'src')")
+          if [ ! -d "$CLASS_PATH" ]; then
+            echo "Missing classPath directory: $CLASS_PATH"
+            exit 1
+          fi
+
+          mkdir -p "package/$(dirname "$CLASS_PATH")"
+          cp -r "$CLASS_PATH" "package/$CLASS_PATH"
+
+          if [ -d cli ]; then cp -r cli package/cli; fi
+          if [ -f build_cli.hxml ]; then cp build_cli.hxml package/build_cli.hxml; fi
+
+          if [ -f README.md ]; then cp README.md package/README.md; fi
+          if [ -f LICENSE ]; then cp LICENSE package/LICENSE; fi
+          if [ -f CHANGELOG.md ]; then cp CHANGELOG.md package/CHANGELOG.md; fi
+
+      - name: Build CLI package
+        run: |
+          if [ -f package/build_cli.hxml ]; then
+            cd package
+            haxe build_cli.hxml
+          fi
+
+      - name: Generate haxelib.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/generate_haxelib_json.py
+
+      - name: Show generated haxelib.json
+        run: |
+          cat package/haxelib.json
+
+      - name: Publish package
+        env:
+          HAXELIB_USER: ${{ secrets.HAXELIB_USER }}
+          HAXELIB_PASSWORD: ${{ secrets.HAXELIB_PASSWORD }}
+        run: |
+          if [ -n "$HAXELIB_USER" ]; then
+            printf "%s\n%s\n" "$HAXELIB_USER" "$HAXELIB_PASSWORD" | haxelib submit package
+          else
+            printf "%s\n" "$HAXELIB_PASSWORD" | haxelib submit package
+          fi
+          

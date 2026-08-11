@@ -1,0 +1,5 @@
+-cp src
+-cp cli
+-m Main
+
+--neko run.n
